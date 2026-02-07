@@ -6,7 +6,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiohttp import web
 
-# --- VARIABLES (Render Environment se lega) ---
+# --- VARIABLES ---
 API_ID = int(os.environ.get("API_ID", 12345))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -56,7 +56,11 @@ async def stream_handler(request):
         
         if not media: return web.Response(status=404, text="File Not Found")
 
-        file_name = getattr(media, "file_name", "video.mp4") or "video.mp4"
+        # FIX: Filename handling for empty names
+        file_name = getattr(media, "file_name", None)
+        if not file_name:
+            file_name = "video.mp4"
+            
         mime_type = getattr(media, "mime_type", "video/mp4") or "video/mp4"
 
         # Stream directly to response
@@ -64,6 +68,7 @@ async def stream_handler(request):
         return web.Response(body=file_stream.getbuffer(), headers=get_cors_headers(mime_type, file_name))
 
     except Exception as e:
+        logger.error(f"Stream Error: {e}")
         return web.Response(status=500, text=f"Error: {e}")
 
 # --- BOT COMMANDS ---
@@ -77,11 +82,20 @@ async def media_handler(client, message):
         chat_id = message.chat.id
         msg_id = message.id
         media = message.video or message.document or message.audio
-        fname = getattr(media, "file_name", "Video")
+        
+        # --- FIX IS HERE (Ye logic change kiya hai) ---
+        # Pehle check karo file name hai ya nahi
+        fname = getattr(media, "file_name", None)
+        
+        # Agar naam None hai (empty hai), to 'Video' rakh do
+        if not fname:
+            fname = "video.mp4"
+            
+        # Ab URL encode karo (Ab crash nahi hoga kyunki fname string hai)
+        safe_filename = urllib.parse.quote(fname)
 
         # Dynamic Links
         stream_link = f"{RENDER_EXTERNAL_URL}/stream/{chat_id}/{msg_id}"
-        safe_filename = urllib.parse.quote(fname)
         web_app_link = f"{WEB_APP_URL}/?src={stream_link}&name={safe_filename}"
 
         await message.reply_text(
@@ -89,7 +103,8 @@ async def media_handler(client, message):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("▶️ Play Video", url=web_app_link)]])
         )
     except Exception as e:
-        logger.error(e)
+        logger.error(f"Handler Error: {e}")
+        await message.reply_text("❌ Error generating link.")
 
 # --- RUNNER ---
 async def start_services():
